@@ -6,7 +6,213 @@
 		<title>Optimising reflows and repaints</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="description" content="A talk on optimising JavaScript plugins to reduce the number of reflows and repaints to improve performance." />
+		
+		<link rel="stylesheet" href="css/reveal.min.css" />
+		<link rel="stylesheet" href="css/theme/beige.css" id="theme" />
+		<link rel="stylesheet" href="lib/css/zenburn.css" />
+		<link rel="stylesheet" href="reveal-overrides.css" />
 	</head>
 	<body>
+		<div class="reveal">
+			<div class="slides">
+				<section>
+					<h1>Optimising reflows and repaints</h1>
+					<p>Thomas Gohard</p>
+					<p>GitHub: <a href="https://github.com/thomasgohard">@thomasgohard</a></p>
+					<p>Twitter: <a href="https://twitter.com/thomasgohard">@thomasgohard</a></p>
+				</section>
+				<section>
+					<h2>Why you should care</h2>
+					<p class="xbig">7.2s</p>
+					<p class="xbig border-top">960ms</p>
+					<p class="small">Source: <a href="http://blog.fogcreek.com/we-spent-a-week-making-trello-boards-load-extremely-fast-heres-how-we-did-it/">http://blog.fogcreek.com/we-spent-a-week-making-trello-boards-load-extremely-fast-heres-how-we-did-it/</a></p>
+				</section>
+				<section>
+					<h2>Rendering a Web page</h2>
+					<img src="BrowserRendering.png" />
+				</section>
+				<section>
+					<h2>The layout (a.k.a. reflow) operation</h2>
+					<ul>
+						<li>Calculate position and dimensions of elements
+							<ul>
+								<li>Flow-based layout</li>
+							</ul>
+						</li>
+						<li>Triggered on change of position or dimensions</li>
+						<li>Triggers a repaint</li>
+					</ul>
+				</section>
+				<section>
+					<h2>The paint operation</h2>
+					<ul>
+						<li>Calculate and set colour of each pixel</li>
+						<li>Triggered whenever a pixel's colour must be changed</li>
+					</ul>
+				</section>
+				<section>
+					<h2>Browsers do some optimisation</h2>
+					<ul>
+						<li>Limit the scope of reflows and repaints.</li>
+						<li>Buffer and batch reflows and repaints.</li>
+					</ul>
+				</section>
+				<section>
+					<h2>What triggers a reflow or a repaint</h2>
+					<div class="two-columns">
+						<div class="fragment" data-fragment-index="0">
+							<h3>User actions</h3>
+							<ul>
+								<li>Scroll</li>
+								<li>Resize browser window</li>
+								<li>Change font size</li>
+								<li>Zoom</li>
+								<li>Type text in form field</li>
+							</ul>
+						</div>
+						<div class="fragment" data-fragment-index="1">
+							<h3>DOM or style manipulations</h3>
+							<ul>
+								<li>Insert/remove DOM element</li>
+								<li>Change <code>class</code> or <code>style</code> attributes</li>
+								<li>Computing styles (e.g., getComputedStyle)</li>
+							</ul>
+						</div>
+					</div>
+				</section>
+				<section>
+					<h2>Changing styles — the bad way</h2>
+					<pre><code class="javascript">
+elm.style.border = "1px solid #000"; // reflow + repaint
+elm.style.backgroundColor = "#fff";  // repaint
+elm.style.color = "#000";            // repaint
+elm.style.fontWeight = "bold";       // reflow + repaint
+					</code></pre>
+					<p>2 reflows, 4 repaints</p>
+				</section>
+				<section>
+					<h2>Changing styles — the good way</h2>
+					<pre><code class="javascript">
+elm.style.cssText += " border: 1px solid #000; background-color: #fff; \
+color: #000; font-weight: bold;"; // reflow + repaint
+					</code></pre>
+					<p>or</p>
+					<pre><code class="javascript">
+elm.className += " someclassname"; // reflow + repaint
+					</code></pre>
+					<p>1 reflow, 1 repaint</p>
+				</section>
+				<section>
+					<h2>Computing and setting styles — the bad way</h2>
+					<pre><code class="javascript">
+for (var i = 0; i < 100; ++i) {
+    // reflow + repaint (offsetLeft), reflow + repaint (style.left)
+    elm.style.left = elm.offsetLeft + 10 + "px";
+}
+					</code></pre>
+					<p>200 reflows, 200 repaints</p>
+				</section>
+				<section>
+					<h2>Computing and setting styles — the good way</h2>
+					<pre><code class="javascript">
+elmLeft = elm.offsetLeft;            // reflow + repaint
+for (var i = 0; i < 100; ++i) {
+    elmLeft += 10;
+    elm.style.left = elmLeft + "px"; // reflow + repaint
+}
+					</code></pre>
+					<p>101 reflows, 101 repaints</p>
+				</section>
+				<section>
+					<h2>Changing styles on multiple elements — the bad way</h2>
+					<pre><code class="javascript">
+for (var i = 0; i < 100; ++i) {
+    elm = parentElm.children[i];
+    // reflow + repaint (offsetLeft), reflow + repaint (style.left)
+    elm.style.left = elm.offsetLeft + 10 + "px";
+}
+					</code></pre>
+					<p>200 reflows, 200 repaints</p>
+				</section>
+				<section>
+					<h2>Changing styles on multiple elements — the good way</h2>
+					<pre><code class="javascript">
+parentElm.style.display = "none";    // reflow + repaint
+for (var i = 0; i < 100; ++i) {
+    elm = parentElm.children[i];
+    elm.style.left = elm.offsetLeft + 10 + "px";
+}
+parentElm.style.display = "block";   // reflow + repaint
+					</code></pre>
+					<p>2 reflows, 2 repaints</p>
+				</section>
+				<section>
+					<h2>Changing styles on multiple elements — another good way</h2>
+					<pre><code class="javascript">
+var parentElmParent = parentElm.parent;
+var parentElmSibling = parentElm.nextSibling;
+var parentElm = parentElmParent.removeChild(parentElm); // reflow + repaint
+for (var i = 0; i < 100; ++i) {
+    elm = parentClone.children[i];
+    elm.style.left = elm.offsetLeft + 10 + "px";
+}
+// reflow + repaint
+parentElmParent.insertBefore(parentElm, parentElmSibling); 					</code></pre>
+					<p>2 reflows, 2 repaints</p>
+				</section>
+				<section>
+					<h2>Changing styles on multiple elements — yet another good way</h2>
+					<pre><code class="javascript">
+var parentClone = clone(parentElm); // assume clone() creates a deep clone
+for (var i = 0; i < 100; ++i) {
+    elm = parentClone.children[i];
+    elm.style.left = elm.offsetLeft + 10 + "px";
+}
+parentElm = parentClone;   // reflow + repaint
+					</code></pre>
+					<p>1 reflow, 1 repaint</p>
+				</section>
+				<section>
+					<p class="big">Thank you!</p>
+					<p>Please share and improve this presentation.</p>
+					<p class="small">Presentation: <a href="https://thomasgohard.github.io/optimising-reflows-and-repaints">https://thomasgohard.github.io/optimising-reflows-and-repaints</a></p>
+					<p class="small">Source: <a href="https://github.com/thomasgohard/optimising-reflows-and-repaints">https://github.com/thomasgohard/optimising-reflows-and-repaints</a></p>
+					<p class="xsmall"><a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/deed.en_US"><img alt="Creative Commons License" style="border-width:0" src="http://i.creativecommons.org/l/by-sa/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/deed.en_US">Creative Commons Attribution-ShareAlike 4.0 International License</a></p>
+				</section>
+			</div>
+		</div>
+		
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.min.js"></script>
+
+		<script>
+
+			// Full list of configuration options available here:
+			// https://github.com/hakimel/reveal.js#configuration
+			Reveal.initialize({
+				controls: true,
+				progress: true,
+				history: true,
+				center: true,
+
+				theme: Reveal.getQueryHash().theme, // available themes are in /css/theme
+				transition: Reveal.getQueryHash().transition || 'default', // default/cube/page/concave/zoom/linear/fade/none
+
+				// Parallax scrolling
+				// parallaxBackgroundImage: 'https://s3.amazonaws.com/hakim-static/reveal-js/reveal-parallax-1.jpg',
+				// parallaxBackgroundSize: '2100px 900px',
+
+				// Optional libraries used to extend on reveal.js
+				dependencies: [
+					{ src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+					{ src: 'plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+					{ src: 'plugin/zoom-js/zoom.js', async: true, condition: function() { return !!document.body.classList; } },
+					{ src: 'plugin/notes/notes.js', async: true, condition: function() { return !!document.body.classList; } }
+				]
+			});
+
+		</script>
 	</body>
 </html>
